@@ -1,0 +1,1880 @@
+version: "1.0"
+
+semantic_model:
+  - name: customer_experience_analytics
+    description: >-
+      Comprehensive semantic model for Customer Experience analytics spanning customer relationship management,
+      commercial sales transactions, product inventory, logistics, campaigns, human resources, and exchange rates.
+      This model supports end-to-end analytical queries across customer journeys, order fulfillment, product performance,
+      supplier relationships, employee assignments, and campaign effectiveness.
+    
+    ai_context:
+      instructions: >-
+        ## Dataset Grain Guide
+        
+        - **customers**: One row per customer. Use for customer-level analysis.
+        - **orders**: One row per order. Use for order-level revenue, cost, and transaction analysis.
+        - **order_items**: One row per order line item. Use for product-level revenue, cost, and quantity analysis within orders.
+        - **products**: One row per product. Use for product catalog and pricing analysis.
+        - **product_categories**: One row per product category. Supports hierarchical category analysis via parent_category_id.
+        - **stores**: One row per store location. Use for store-level analysis.
+        - **suppliers**: One row per supplier. Use for supplier performance and reliability analysis.
+        - **shipments**: One row per shipment. Use for shipment-level freight cost and delivery analysis.
+        - **shipment_items**: One row per shipment line item. Use for product-level shipment quantity analysis.
+        - **campaigns**: One row per marketing campaign. Use for campaign performance analysis.
+        - **employees**: One row per employee. Supports recursive hierarchy via manager_id.
+        - **customer_account_managers**: One row per customer-employee assignment with temporal validity. Supports SCD Type-2 analysis.
+        - **exchange_rates**: One row per currency per date. Use for as-of currency conversion.
+        
+        ## Metric Selection Guide
+        
+        **Order-Level Metrics**:
+        - Use `orders.total_amount_usd` for order-level revenue.
+        - Use `orders.total_cost_usd` for order-level cost.
+        - Do NOT sum order-level amounts after joining to order_items (causes duplication).
+        
+        **Order-Item-Level Metrics**:
+        - Use `order_items.line_revenue_usd` for product-level or line-item revenue.
+        - Use `order_items.line_cost_usd` for product-level or line-item cost.
+        - Use `order_items.quantity` for units sold at the line-item level.
+        
+        **Shipment-Level Metrics**:
+        - Use `shipments.freight_cost_usd` for shipment-level freight cost.
+        - Do NOT sum shipment-level amounts after joining to shipment_items.
+        
+        **Shipment-Item-Level Metrics**:
+        - Use `shipment_items.quantity` for units shipped at the line-item level.
+        
+        ## Join Guidance
+        
+        **Standard Relationships**:
+        - customers → orders: Join on customer_id (one-to-many).
+        - orders → order_items: Join on order_id (one-to-many).
+        - order_items → products: Join on product_id (many-to-one).
+        - products → product_categories: Join on category_id (many-to-one).
+        - products → suppliers: Join on supplier_id (many-to-one).
+        - orders → stores: Join on store_id (many-to-one).
+        - shipments → suppliers: Join on supplier_id (many-to-one).
+        - shipments → stores: Join on store_id (many-to-one).
+        - shipments → shipment_items: Join on shipment_id (one-to-many).
+        - shipment_items → products: Join on product_id (many-to-one).
+        - campaigns: Standalone dimension for campaign analysis.
+        
+        **Recursive Hierarchy**:
+        - employees.manager_id → employees.employee_id: Self-referencing hierarchy for organizational structure.
+        - product_categories.parent_category_id → product_categories.category_id: Self-referencing hierarchy for category structure.
+        
+        **SCD Type-2 Relationship**:
+        - customer_account_managers provides temporal assignment of employees to customers.
+        - Join customers to employees via customer_account_managers using customer_id, employee_id, and date range logic.
+        - For a given analysis date, match where analysis_date >= valid_from AND analysis_date < COALESCE(valid_to, '9999-12-31'::date).
+        
+        **As-Of Relationship**:
+        - exchange_rates provides currency conversion rates as of a specific date.
+        - Join orders to exchange_rates using currency_code and the most recent rate_date <= order_date.
+        - Use a lateral join or window function to select the correct rate.
+        
+        ## Double-Counting Prevention
+        
+        **Critical Rule**: Never sum order-level measures after joining orders to order_items.
+        
+        Example (INCORRECT):
+        ```sql
+        SELECT SUM(o.total_amount_usd)
+        FROM orders o
+        JOIN order_items oi ON o.order_id = oi.order_id
+        -- This duplicates order totals for each order item
+        ```
+        
+        Example (CORRECT for order-level revenue):
+        ```sql
+        SELECT SUM(o.total_amount_usd)
+        FROM orders o
+        -- No join to order_items
+        ```
+        
+        Example (CORRECT for product-level revenue):
+        ```sql
+        SELECT SUM(oi.line_revenue_usd)
+        FROM order_items oi
+        -- Use line_revenue_usd, not total_amount_usd
+        ```
+        
+        **Same rule applies to**:
+        - shipments → shipment_items
+        - Any one-to-many relationship where measures exist at the parent level
+        
+        ## Time Analysis Guide
+        
+        **Order Analysis**:
+        - Use `orders.order_date` for order placement time analysis.
+        - Supports daily, monthly, quarterly, and yearly aggregation.
+        
+        **Shipment Analysis**:
+        - Use `shipments.ship_date` for shipment departure time analysis.
+        - Use `shipments.expected_arrival` and `shipments.actual_arrival` for delivery performance analysis.
+        
+        **Campaign Analysis**:
+        - Use `campaigns.start_date` and `campaigns.end_date` for campaign period analysis.
+        
+        **Customer Analysis**:
+        - Use `customers.signup_date` for customer acquisition time analysis.
+        - Use `customers.created_at` for record creation time analysis.
+        
+        **Employee Analysis**:
+        - Use `employees.hire_date` for employee tenure analysis.
+        
+        **Account Manager Assignment Analysis**:
+        - Use `customer_account_managers.valid_from` and `customer_account_managers.valid_to` for temporal assignment analysis.
+        
+        ## SCD Type-2 Guidance
+        
+        The `customer_account_managers` table implements SCD Type-2 for tracking historical customer-to-employee assignments.
+        
+        **Structure**:
+        - customer_id: References the customer
+        - employee_id: References the assigned account manager
+        - valid_from: Assignment start date
+        - valid_to: Assignment end date (NULL indicates current assignment)
+        
+        **Query Pattern**:
+        To find the account manager for a customer on a specific date:
+        ```sql
+        SELECT cam.employee_id
+        FROM customer_account_managers cam
+        WHERE cam.customer_id = <customer_id>
+          AND <analysis_date> >= cam.valid_from
+          AND <analysis_date> < COALESCE(cam.valid_to, '9999-12-31'::date)
+        ```
+        
+        **Analytical Use**:
+        - Analyze orders by the account manager assigned at the time of the order.
+        - Track account manager changes over time.
+        - Calculate metrics per account manager per period.
+        
+        ## As-Of Join Guidance
+        
+        The `exchange_rates` table provides currency conversion rates as of specific dates.
+        
+        **Structure**:
+        - currency_code: ISO currency code
+        - rate_date: Date for which the rate applies
+        - usd_rate: Exchange rate to USD
+        
+        **Query Pattern**:
+        To convert order amounts using the exchange rate as of the order date:
+        ```sql
+        SELECT o.order_id,
+               o.local_amount,
+               o.local_amount * er.usd_rate AS converted_usd
+        FROM orders o
+        LEFT JOIN LATERAL (
+          SELECT er.usd_rate
+          FROM exchange_rates er
+          WHERE er.currency_code = o.currency_code
+            AND er.rate_date <= o.order_date::date
+          ORDER BY er.rate_date DESC
+          LIMIT 1
+        ) er ON true
+        ```
+        
+        ## Recursive Hierarchy Guidance
+        
+        **Employee Hierarchy**:
+        - employees.manager_id references employees.employee_id
+        - Supports organizational reporting structure
+        - Use recursive CTE to traverse the hierarchy
+        
+        Example (find all reports under a manager):
+        ```sql
+        WITH RECURSIVE employee_hierarchy AS (
+          SELECT employee_id, employee_name, manager_id, 1 AS level
+          FROM employees
+          WHERE employee_id = <manager_id>
+          
+          UNION ALL
+          
+          SELECT e.employee_id, e.employee_name, e.manager_id, eh.level + 1
+          FROM employees e
+          JOIN employee_hierarchy eh ON e.manager_id = eh.employee_id
+        )
+        SELECT * FROM employee_hierarchy
+        ```
+        
+        **Product Category Hierarchy**:
+        - product_categories.parent_category_id references product_categories.category_id
+        - Supports hierarchical category structure
+        - Use recursive CTE to traverse the hierarchy
+        
+        Example (find all subcategories):
+        ```sql
+        WITH RECURSIVE category_hierarchy AS (
+          SELECT category_id, category_name, parent_category_id, 1 AS level
+          FROM product_categories
+          WHERE category_id = <parent_category_id>
+          
+          UNION ALL
+          
+          SELECT pc.category_id, pc.category_name, pc.parent_category_id, ch.level + 1
+          FROM product_categories pc
+          JOIN category_hierarchy ch ON pc.parent_category_id = ch.category_id
+        )
+        SELECT * FROM category_hierarchy
+        ```
+        
+        ## Important Formulas
+        
+        **Line Revenue (order_items.line_revenue_usd)**:
+        - Formula: quantity * unit_price_usd * (1 - discount_pct / 100.0)
+        - Represents revenue after discount at the line-item level
+        
+        **Line Cost (order_items.line_cost_usd)**:
+        - Formula: quantity * unit_cost_usd
+        - Represents cost at the line-item level
+        
+        **Gross Profit (Order Level)**:
+        - Formula: orders.total_amount_usd - orders.total_cost_usd
+        - Use only at order grain, not after joining to order_items
+        
+        **Gross Profit (Line Item Level)**:
+        - Formula: order_items.line_revenue_usd - order_items.line_cost_usd
+        - Use at product/line-item grain
+        
+        **Gross Margin %**:
+        - Formula: (Revenue - Cost) / Revenue * 100
+        - Handle division by zero
+        
+        **Delivery Delay (Days)**:
+        - Formula: shipments.actual_arrival - shipments.expected_arrival
+        - Positive values indicate late delivery
+        - NULL when actual_arrival is not recorded
+        
+        ## Query Restrictions
+        
+        - Do not join orders to order_items when calculating order-level totals.
+        - Do not join shipments to shipment_items when calculating shipment-level totals.
+        - Always specify the grain when aggregating measures.
+        - Use appropriate date fields for time-based analysis.
+        - Handle NULL values in valid_to, actual_arrival, and optional fields.
+        - Use COALESCE or NULLIF for safe division and NULL handling.
+        - Respect SCD Type-2 date range logic when joining customer_account_managers.
+        - Use as-of logic when joining exchange_rates.
+        - Use recursive CTEs for hierarchical queries.
+
+    datasets:
+      - name: customers
+        business_name: Customers
+        description: >-
+          Stores comprehensive customer profiles including contact details, location, segment classification,
+          and signup information. Grain: One row per customer. Primary entity for customer-level analysis.
+        source: customers
+        primary_key:
+          - customer_id
+        fields:
+          - name: customer_id
+            business_name: Customer Identifier
+            description: Unique identifier for a customer.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: first_name
+            business_name: First Name
+            description: Given name of the customer.
+            sql_type: VARCHAR(50)
+            constraints:
+              - NOT NULL
+          
+          - name: last_name
+            business_name: Last Name
+            description: Family name of the customer.
+            sql_type: VARCHAR(50)
+            constraints:
+              - NOT NULL
+          
+          - name: email
+            business_name: Email
+            description: Email address used to contact the customer.
+            sql_type: VARCHAR(150)
+            constraints:
+              - NOT NULL
+              - UNIQUE
+          
+          - name: phone
+            business_name: Phone
+            description: Primary phone number of the customer.
+            sql_type: VARCHAR(20)
+            constraints: []
+          
+          - name: city
+            business_name: City
+            description: City where the customer is located.
+            sql_type: VARCHAR(80)
+            constraints: []
+            dimension:
+              is_time: false
+          
+          - name: country
+            business_name: Country
+            description: Country where the customer is located.
+            sql_type: VARCHAR(80)
+            constraints: []
+            dimension:
+              is_time: false
+          
+          - name: customer_segment
+            business_name: Customer Segment
+            description: Segment classification assigned to the customer.
+            sql_type: VARCHAR(20)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: false
+          
+          - name: signup_date
+            business_name: Signup Date
+            description: Date when the customer registered or signed up.
+            sql_type: DATE
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: true
+          
+          - name: created_at
+            business_name: Created At
+            description: Timestamp when the customer record was created.
+            sql_type: TIMESTAMP(29,6)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: true
+
+      - name: orders
+        business_name: Orders
+        description: >-
+          Records end-to-end sales transactions including order header information, customer references,
+          store references, order dates, channels, payment methods, status, ratings, currency, and monetary totals.
+          Grain: One row per order. Use for order-level revenue, cost, and transaction analysis.
+        source: orders
+        primary_key:
+          - order_id
+        fields:
+          - name: order_id
+            business_name: Order Identifier
+            description: Unique identifier for a customer order.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: customer_id
+            business_name: Customer Reference
+            description: References the customer who placed the order.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: store_id
+            business_name: Store Reference
+            description: References the store fulfilling the order.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: order_date
+            business_name: Order Date
+            description: Timestamp when the order was placed.
+            sql_type: TIMESTAMP(29,6)
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: true
+          
+          - name: order_channel
+            business_name: Order Channel
+            description: Channel through which the order was placed.
+            sql_type: VARCHAR(20)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: false
+          
+          - name: payment_method
+            business_name: Payment Method
+            description: Method used by the customer to pay for the order.
+            sql_type: VARCHAR(20)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: false
+          
+          - name: order_status
+            business_name: Order Status
+            description: Current status of the order.
+            sql_type: VARCHAR(20)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: false
+          
+          - name: is_returned
+            business_name: Is Returned
+            description: Indicates whether the order has been returned.
+            sql_type: BOOL
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: false
+          
+          - name: customer_rating
+            business_name: Customer Rating
+            description: Rating provided by the customer for the order experience.
+            sql_type: INT2
+            constraints: []
+          
+          - name: currency_code
+            business_name: Currency Code
+            description: Currency code used for the order amounts.
+            sql_type: VARCHAR(3)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: false
+          
+          - name: total_amount_usd
+            business_name: Total Amount USD
+            description: Total order amount in USD.
+            sql_type: NUMERIC(12,2)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+          
+          - name: local_amount
+            business_name: Local Amount
+            description: Total order amount in the local currency.
+            sql_type: NUMERIC(14,2)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+          
+          - name: total_cost_usd
+            business_name: Total Cost USD
+            description: Total cost of fulfilling the order in USD.
+            sql_type: NUMERIC(12,2)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+
+      - name: order_items
+        business_name: Order Items
+        description: >-
+          Records order line items including product references, quantities, unit prices, unit costs, discounts,
+          and calculated line-level revenue and cost. Grain: One row per order line item. Use for product-level
+          revenue, cost, and quantity analysis within orders.
+        source: order_items
+        primary_key:
+          - order_item_id
+        fields:
+          - name: order_item_id
+            business_name: Order Item Identifier
+            description: Unique identifier for an order line item.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: order_id
+            business_name: Order Reference
+            description: References the related order record.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: product_id
+            business_name: Product Reference
+            description: References the product included in the order item.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: quantity
+            business_name: Quantity
+            description: Number of units of the product ordered.
+            sql_type: INT4
+            constraints:
+              - NOT NULL
+          
+          - name: unit_price_usd
+            business_name: Unit Price USD
+            description: Selling price per unit in USD.
+            sql_type: NUMERIC(10,2)
+            constraints:
+              - NOT NULL
+          
+          - name: unit_cost_usd
+            business_name: Unit Cost USD
+            description: Cost per unit in USD.
+            sql_type: NUMERIC(10,2)
+            constraints:
+              - NOT NULL
+          
+          - name: discount_pct
+            business_name: Discount Pct
+            description: Percentage discount applied to the order item.
+            sql_type: NUMERIC(5,2)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+          
+          - name: line_revenue_usd
+            business_name: Line Revenue USD
+            description: Calculated revenue for the order item line in USD after discounts.
+            sql_type: NUMERIC(12,2)
+            constraints:
+              - DEFAULT
+              - COMPUTED
+          
+          - name: line_cost_usd
+            business_name: Line Cost USD
+            description: Calculated cost for the order item line in USD.
+            sql_type: NUMERIC(12,2)
+            constraints:
+              - DEFAULT
+              - COMPUTED
+
+      - name: products
+        business_name: Products
+        description: >-
+          Contains product catalog including product names, category references, unit costs, unit prices,
+          supplier references, and creation timestamps. Grain: One row per product. Use for product catalog
+          and pricing analysis.
+        source: products
+        primary_key:
+          - product_id
+        fields:
+          - name: product_id
+            business_name: Product Identifier
+            description: Unique identifier for a product.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: product_name
+            business_name: Product Name
+            description: Name or title of the product.
+            sql_type: VARCHAR(150)
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: false
+          
+          - name: category_id
+            business_name: Category Reference
+            description: References the category to which the product belongs.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: unit_cost_usd
+            business_name: Unit Cost USD
+            description: Cost to acquire or produce one unit of the product in USD.
+            sql_type: NUMERIC(10,2)
+            constraints:
+              - NOT NULL
+          
+          - name: unit_price_usd
+            business_name: Unit Price USD
+            description: Selling price per unit of the product in USD.
+            sql_type: NUMERIC(10,2)
+            constraints:
+              - NOT NULL
+          
+          - name: supplier_id
+            business_name: Supplier Reference
+            description: References the supplier providing the product.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: created_at
+            business_name: Created At
+            description: Timestamp when the product record was created.
+            sql_type: TIMESTAMP(29,6)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: true
+
+      - name: product_categories
+        business_name: Product Categories
+        description: >-
+          Contains product category definitions with hierarchical structure via parent category references.
+          Grain: One row per product category. Supports hierarchical category analysis.
+        source: product_categories
+        primary_key:
+          - category_id
+        fields:
+          - name: category_id
+            business_name: Category Identifier
+            description: Unique identifier for a product category.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: category_name
+            business_name: Category Name
+            description: Name of the product category.
+            sql_type: VARCHAR(100)
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: false
+          
+          - name: parent_category_id
+            business_name: Parent Category Reference
+            description: References the parent category in the hierarchy.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+
+      - name: stores
+        business_name: Stores
+        description: >-
+          Contains store location information including store names, city, country, store type, and creation timestamps.
+          Grain: One row per store location. Use for store-level analysis.
+        source: stores
+        primary_key:
+          - store_id
+        fields:
+          - name: store_id
+            business_name: Store Identifier
+            description: Unique identifier for a store.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: store_name
+            business_name: Store Name
+            description: Name of the store.
+            sql_type: VARCHAR(120)
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: false
+          
+          - name: city
+            business_name: City
+            description: City where the store is located.
+            sql_type: VARCHAR(80)
+            constraints: []
+            dimension:
+              is_time: false
+          
+          - name: country
+            business_name: Country
+            description: Country where the store is located.
+            sql_type: VARCHAR(80)
+            constraints: []
+            dimension:
+              is_time: false
+          
+          - name: store_type
+            business_name: Store Type
+            description: Type or format of the store, such as online or physical.
+            sql_type: VARCHAR(30)
+            constraints: []
+            dimension:
+              is_time: false
+          
+          - name: created_at
+            business_name: Created At
+            description: Timestamp when the store record was created.
+            sql_type: TIMESTAMP(29,6)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: true
+
+      - name: suppliers
+        business_name: Suppliers
+        description: >-
+          Contains supplier information including supplier names, country, contact email, reliability scores,
+          and creation timestamps. Grain: One row per supplier. Use for supplier performance and reliability analysis.
+        source: suppliers
+        primary_key:
+          - supplier_id
+        fields:
+          - name: supplier_id
+            business_name: Supplier Identifier
+            description: Unique identifier for a supplier.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: supplier_name
+            business_name: Supplier Name
+            description: Name of the supplier organization.
+            sql_type: VARCHAR(120)
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: false
+          
+          - name: country
+            business_name: Country
+            description: Country where the supplier is based.
+            sql_type: VARCHAR(80)
+            constraints: []
+            dimension:
+              is_time: false
+          
+          - name: contact_email
+            business_name: Contact Email
+            description: Email address for contacting the supplier.
+            sql_type: VARCHAR(150)
+            constraints: []
+          
+          - name: reliability_score
+            business_name: Reliability Score
+            description: Score indicating the reliability of the supplier.
+            sql_type: NUMERIC(3,2)
+            constraints:
+              - DEFAULT
+          
+          - name: created_at
+            business_name: Created At
+            description: Timestamp when the supplier record was created.
+            sql_type: TIMESTAMP(29,6)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: true
+
+      - name: shipments
+        business_name: Shipments
+        description: >-
+          Records shipment information including supplier references, store references, ship dates, expected and actual
+          arrival dates, freight costs, and shipment status. Grain: One row per shipment. Use for shipment-level
+          freight cost and delivery analysis.
+        source: shipments
+        primary_key:
+          - shipment_id
+        fields:
+          - name: shipment_id
+            business_name: Shipment Identifier
+            description: Unique identifier for a shipment.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: supplier_id
+            business_name: Supplier Reference
+            description: References the supplier responsible for the shipment.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: store_id
+            business_name: Store Reference
+            description: References the destination store for the shipment.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: ship_date
+            business_name: Ship Date
+            description: Timestamp when the shipment departed.
+            sql_type: TIMESTAMP(29,6)
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: true
+          
+          - name: expected_arrival
+            business_name: Expected Arrival
+            description: Expected arrival date of the shipment.
+            sql_type: DATE
+            constraints: []
+            dimension:
+              is_time: true
+          
+          - name: actual_arrival
+            business_name: Actual Arrival
+            description: Actual arrival date of the shipment.
+            sql_type: DATE
+            constraints: []
+            dimension:
+              is_time: true
+          
+          - name: freight_cost_usd
+            business_name: Freight Cost USD
+            description: Freight cost of the shipment in USD.
+            sql_type: NUMERIC(10,2)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+          
+          - name: shipment_status
+            business_name: Shipment Status
+            description: Current status of the shipment.
+            sql_type: VARCHAR(20)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: false
+
+      - name: shipment_items
+        business_name: Shipment Items
+        description: >-
+          Records shipment line items including product references and quantities. Grain: One row per shipment line item.
+          Use for product-level shipment quantity analysis.
+        source: shipment_items
+        primary_key:
+          - shipment_item_id
+        fields:
+          - name: shipment_item_id
+            business_name: Shipment Item Identifier
+            description: Unique identifier for a shipment line item.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: shipment_id
+            business_name: Shipment Reference
+            description: References the shipment containing the item.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: product_id
+            business_name: Product Reference
+            description: References the product included in the shipment item.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: quantity
+            business_name: Quantity
+            description: Number of units of the product in the shipment item.
+            sql_type: INT4
+            constraints:
+              - NOT NULL
+
+      - name: campaigns
+        business_name: Campaigns
+        description: >-
+          Contains marketing campaign information including campaign names, channels, target segments, start and end dates,
+          and discount percentages. Grain: One row per marketing campaign. Use for campaign performance analysis.
+        source: campaigns
+        primary_key:
+          - campaign_id
+        fields:
+          - name: campaign_id
+            business_name: Campaign Identifier
+            description: Unique identifier for a marketing campaign.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: campaign_name
+            business_name: Campaign Name
+            description: Name of the marketing campaign.
+            sql_type: VARCHAR(120)
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: false
+          
+          - name: channel
+            business_name: Channel
+            description: Marketing channel used to run the campaign.
+            sql_type: VARCHAR(20)
+            constraints: []
+            dimension:
+              is_time: false
+          
+          - name: target_segment
+            business_name: Target Segment
+            description: Customer segment targeted by the campaign.
+            sql_type: VARCHAR(20)
+            constraints: []
+            dimension:
+              is_time: false
+          
+          - name: start_date
+            business_name: Start Date
+            description: Date when the campaign starts.
+            sql_type: DATE
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: true
+          
+          - name: end_date
+            business_name: End Date
+            description: Date when the campaign ends.
+            sql_type: DATE
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: true
+          
+          - name: discount_pct
+            business_name: Discount Pct
+            description: Percentage discount offered by the campaign.
+            sql_type: NUMERIC(5,2)
+            constraints:
+              - NOT NULL
+              - DEFAULT
+
+      - name: employees
+        business_name: Employees
+        description: >-
+          Maintains employee records including employee names, roles, manager references, regions, and hire dates.
+          Grain: One row per employee. Supports recursive hierarchy via manager_id for organizational structure analysis.
+        source: employees
+        primary_key:
+          - employee_id
+        fields:
+          - name: employee_id
+            business_name: Employee Identifier
+            description: Unique identifier for an employee.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: employee_name
+            business_name: Employee Name
+            description: Full name of the employee.
+            sql_type: VARCHAR(100)
+            constraints:
+              - NOT NULL
+          
+          - name: role
+            business_name: Role
+            description: Job role or position of the employee.
+            sql_type: VARCHAR(40)
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: false
+          
+          - name: manager_id
+            business_name: Manager Reference
+            description: References the employee who manages this employee.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+          
+          - name: region
+            business_name: Region
+            description: Geographic region assigned to the employee.
+            sql_type: VARCHAR(80)
+            constraints: []
+            dimension:
+              is_time: false
+          
+          - name: hire_date
+            business_name: Hire Date
+            description: Date when the employee was hired.
+            sql_type: DATE
+            constraints:
+              - NOT NULL
+              - DEFAULT
+            dimension:
+              is_time: true
+
+      - name: customer_account_managers
+        business_name: Customer Account Managers
+        description: >-
+          Stores temporal customer-to-employee assignments with validity periods. Grain: One row per customer-employee
+          assignment with temporal validity. Supports SCD Type-2 analysis for tracking historical account manager assignments.
+        source: customer_account_managers
+        primary_key:
+          - assignment_id
+        fields:
+          - name: assignment_id
+            business_name: Assignment Identifier
+            description: Unique identifier for a customer account manager assignment.
+            sql_type: serial
+            constraints:
+              - PRIMARY KEY
+              - NOT NULL
+              - DEFAULT
+              - AUTO_INCREMENT
+          
+          - name: customer_id
+            business_name: Customer Reference
+            description: References the related customer record.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: employee_id
+            business_name: Employee Reference
+            description: References the employee assigned as the account manager.
+            sql_type: INT4
+            constraints:
+              - FOREIGN KEY
+              - NOT NULL
+          
+          - name: valid_from
+            business_name: Valid From
+            description: Date when the account manager assignment becomes effective.
+            sql_type: DATE
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: true
+          
+          - name: valid_to
+            business_name: Valid To
+            description: Date when the account manager assignment ends.
+            sql_type: DATE
+            constraints: []
+            dimension:
+              is_time: true
+
+      - name: exchange_rates
+        business_name: Exchange Rates
+        description: >-
+          Contains currency exchange rates as of specific dates. Grain: One row per currency per date.
+          Use for as-of currency conversion in analytical queries.
+        source: exchange_rates
+        primary_key:
+          - currency_code
+          - rate_date
+        fields:
+          - name: currency_code
+            business_name: Currency Code
+            description: ISO currency code for the exchange rate.
+            sql_type: VARCHAR(3)
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: false
+          
+          - name: rate_date
+            business_name: Rate Date
+            description: Date for which the exchange rate applies.
+            sql_type: DATE
+            constraints:
+              - NOT NULL
+            dimension:
+              is_time: true
+          
+          - name: usd_rate
+            business_name: USD Rate
+            description: Exchange rate of the currency against USD.
+            sql_type: NUMERIC(12,6)
+            constraints:
+              - NOT NULL
+
+    relationships:
+      - name: orders_to_customers
+        left_dataset: orders
+        right_dataset: customers
+        relationship_type: many_to_one
+        join:
+          left:
+            - customer_id
+          right:
+            - customer_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each order is placed by exactly one customer.
+          A customer may place zero or many orders. Join on customer_id for customer-level analysis of orders.
+
+      - name: orders_to_stores
+        left_dataset: orders
+        right_dataset: stores
+        relationship_type: many_to_one
+        join:
+          left:
+            - store_id
+          right:
+            - store_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each order is fulfilled by exactly one store.
+          A store may fulfill zero or many orders. Join on store_id for store-level analysis of orders.
+
+      - name: order_items_to_orders
+        left_dataset: order_items
+        right_dataset: orders
+        relationship_type: many_to_one
+        join:
+          left:
+            - order_id
+          right:
+            - order_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each order item belongs to exactly one order.
+          An order may contain one or many order items. Join on order_id. CRITICAL: Do not sum order-level
+          measures (orders.total_amount_usd, orders.total_cost_usd) after this join, as it will duplicate
+          order totals for each line item. Use order_items.line_revenue_usd and order_items.line_cost_usd
+          for product-level analysis.
+
+      - name: order_items_to_products
+        left_dataset: order_items
+        right_dataset: products
+        relationship_type: many_to_one
+        join:
+          left:
+            - product_id
+          right:
+            - product_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each order item references exactly one product.
+          A product may appear in zero or many order items. Join on product_id for product-level sales analysis.
+
+      - name: products_to_product_categories
+        left_dataset: products
+        right_dataset: product_categories
+        relationship_type: many_to_one
+        join:
+          left:
+            - category_id
+          right:
+            - category_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each product belongs to exactly one category.
+          A category may contain zero or many products. Join on category_id for category-level product analysis.
+
+      - name: products_to_suppliers
+        left_dataset: products
+        right_dataset: suppliers
+        relationship_type: many_to_one
+        join:
+          left:
+            - supplier_id
+          right:
+            - supplier_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each product is provided by exactly one supplier.
+          A supplier may provide zero or many products. Join on supplier_id for supplier-level product analysis.
+
+      - name: shipments_to_suppliers
+        left_dataset: shipments
+        right_dataset: suppliers
+        relationship_type: many_to_one
+        join:
+          left:
+            - supplier_id
+          right:
+            - supplier_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each shipment originates from exactly one supplier.
+          A supplier may send zero or many shipments. Join on supplier_id for supplier-level shipment analysis.
+
+      - name: shipments_to_stores
+        left_dataset: shipments
+        right_dataset: stores
+        relationship_type: many_to_one
+        join:
+          left:
+            - store_id
+          right:
+            - store_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each shipment is destined for exactly one store.
+          A store may receive zero or many shipments. Join on store_id for store-level shipment analysis.
+
+      - name: shipment_items_to_shipments
+        left_dataset: shipment_items
+        right_dataset: shipments
+        relationship_type: many_to_one
+        join:
+          left:
+            - shipment_id
+          right:
+            - shipment_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each shipment item belongs to exactly one shipment.
+          A shipment may contain one or many shipment items. Join on shipment_id. CRITICAL: Do not sum
+          shipment-level measures (shipments.freight_cost_usd) after this join, as it will duplicate
+          shipment totals for each line item. Use shipment_items.quantity for product-level shipment analysis.
+
+      - name: shipment_items_to_products
+        left_dataset: shipment_items
+        right_dataset: products
+        relationship_type: many_to_one
+        join:
+          left:
+            - product_id
+          right:
+            - product_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each shipment item references exactly one product.
+          A product may appear in zero or many shipment items. Join on product_id for product-level shipment analysis.
+
+      - name: customer_account_managers_to_customers
+        left_dataset: customer_account_managers
+        right_dataset: customers
+        relationship_type: many_to_one
+        join:
+          left:
+            - customer_id
+          right:
+            - customer_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each assignment references exactly one customer.
+          A customer may have zero or many assignments over time (SCD Type-2). Join on customer_id.
+
+      - name: customer_account_managers_to_employees
+        left_dataset: customer_account_managers
+        right_dataset: employees
+        relationship_type: many_to_one
+        join:
+          left:
+            - employee_id
+          right:
+            - employee_id
+        join_type: many_to_one
+        resolution: >-
+          Standard foreign key relationship. Each assignment references exactly one employee.
+          An employee may have zero or many customer assignments. Join on employee_id.
+
+      - name: employees_hierarchy
+        left_dataset: employees
+        right_dataset: employees
+        relationship_type: many_to_one
+        join:
+          left:
+            - manager_id
+          right:
+            - employee_id
+        join_type: recursive
+        resolution: >-
+          Recursive self-referencing relationship. Each employee may report to one manager (also an employee).
+          A manager may have zero or many direct reports. Join employees.manager_id to employees.employee_id
+          to traverse the organizational hierarchy. Use recursive CTEs to find all reports under a manager
+          or to calculate hierarchy depth. NULL manager_id indicates top-level executives.
+
+      - name: product_categories_hierarchy
+        left_dataset: product_categories
+        right_dataset: product_categories
+        relationship_type: many_to_one
+        join:
+          left:
+            - parent_category_id
+          right:
+            - category_id
+        join_type: recursive
+        resolution: >-
+          Recursive self-referencing relationship. Each category may belong to one parent category.
+          A parent category may have zero or many child categories. Join product_categories.parent_category_id
+          to product_categories.category_id to traverse the category hierarchy. Use recursive CTEs to find
+          all subcategories or to calculate hierarchy depth. NULL parent_category_id indicates top-level categories.
+
+      - name: orders_to_customer_account_managers_scd
+        left_dataset: orders
+        right_dataset: customer_account_managers
+        relationship_type: many_to_one
+        join:
+          left:
+            - customer_id
+            - order_date
+          right:
+            - customer_id
+            - valid_from
+            - valid_to
+        join_type: scd_type2_date_range
+        resolution: >-
+          SCD Type-2 temporal relationship. To find the account manager assigned to a customer at the time
+          of an order, join on customer_id and apply date range logic: orders.order_date::date >= customer_account_managers.valid_from
+          AND orders.order_date::date < COALESCE(customer_account_managers.valid_to, '9999-12-31'::date).
+          This ensures the correct historical assignment is selected. Use this relationship to analyze orders
+          by the account manager who was responsible at the time of the order.
+
+      - name: orders_to_exchange_rates_asof
+        left_dataset: orders
+        right_dataset: exchange_rates
+        relationship_type: many_to_one
+        join:
+          left:
+            - currency_code
+            - order_date
+          right:
+            - currency_code
+            - rate_date
+        join_type: as_of
+        resolution: >-
+          As-of temporal relationship. To convert order amounts using the exchange rate as of the order date,
+          join on currency_code and select the most recent rate where exchange_rates.rate_date <= orders.order_date::date.
+          Use a lateral join or window function to select the correct rate: LEFT JOIN LATERAL (SELECT er.usd_rate
+          FROM exchange_rates er WHERE er.currency_code = orders.currency_code AND er.rate_date <= orders.order_date::date
+          ORDER BY er.rate_date DESC LIMIT 1) er ON true. This ensures the correct exchange rate as of the order date.
+
+    metrics:
+      - name: total_revenue_usd
+        business_name: Total Revenue USD
+        description: >-
+          Total order revenue in USD. Aggregates orders.total_amount_usd at the order level.
+          Use for order-level revenue analysis. Do not use after joining orders to order_items.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(orders.total_amount_usd) AS total_revenue_usd
+                FROM orders
+              columns_used:
+                - orders.total_amount_usd
+
+      - name: total_cost_usd
+        business_name: Total Cost USD
+        description: >-
+          Total order cost in USD. Aggregates orders.total_cost_usd at the order level.
+          Use for order-level cost analysis. Do not use after joining orders to order_items.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(orders.total_cost_usd) AS total_cost_usd
+                FROM orders
+              columns_used:
+                - orders.total_cost_usd
+
+      - name: gross_profit_usd
+        business_name: Gross Profit USD
+        description: >-
+          Total gross profit in USD calculated as total revenue minus total cost at the order level.
+          Formula: SUM(orders.total_amount_usd) - SUM(orders.total_cost_usd).
+          Use for order-level profitability analysis. Do not use after joining orders to order_items.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(orders.total_amount_usd) - SUM(orders.total_cost_usd) AS gross_profit_usd
+                FROM orders
+              columns_used:
+                - orders.total_amount_usd
+                - orders.total_cost_usd
+
+      - name: gross_margin_pct
+        business_name: Gross Margin Percentage
+        description: >-
+          Gross margin percentage calculated as (total revenue - total cost) / total revenue * 100.
+          Formula: (SUM(orders.total_amount_usd) - SUM(orders.total_cost_usd)) / NULLIF(SUM(orders.total_amount_usd), 0) * 100.
+          Handles division by zero. Use for order-level profitability analysis.
+        return_type: percentage
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    CASE
+                        WHEN SUM(orders.total_amount_usd) = 0 THEN 0
+                        ELSE (SUM(orders.total_amount_usd) - SUM(orders.total_cost_usd)) / NULLIF(SUM(orders.total_amount_usd), 0) * 100
+                    END AS gross_margin_pct
+                FROM orders
+              columns_used:
+                - orders.total_amount_usd
+                - orders.total_cost_usd
+
+      - name: order_count
+        business_name: Order Count
+        description: >-
+          Total number of orders. Counts distinct order_id.
+          Use for order volume analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(orders.order_id) AS order_count
+                FROM orders
+              columns_used:
+                - orders.order_id
+
+      - name: customer_count
+        business_name: Customer Count
+        description: >-
+          Total number of distinct customers. Counts distinct customer_id.
+          Use for customer base analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(DISTINCT customers.customer_id) AS customer_count
+                FROM customers
+              columns_used:
+                - customers.customer_id
+
+      - name: average_order_value_usd
+        business_name: Average Order Value USD
+        description: >-
+          Average order value in USD calculated as total revenue divided by order count.
+          Formula: SUM(orders.total_amount_usd) / NULLIF(COUNT(orders.order_id), 0).
+          Use for order-level analysis.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(orders.total_amount_usd) / NULLIF(COUNT(orders.order_id), 0) AS average_order_value_usd
+                FROM orders
+              columns_used:
+                - orders.total_amount_usd
+                - orders.order_id
+
+      - name: product_line_revenue_usd
+        business_name: Product Line Revenue USD
+        description: >-
+          Total product line revenue in USD. Aggregates order_items.line_revenue_usd at the line-item level.
+          Use for product-level revenue analysis. This is the correct metric when analyzing revenue by product.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(order_items.line_revenue_usd) AS product_line_revenue_usd
+                FROM order_items
+              columns_used:
+                - order_items.line_revenue_usd
+
+      - name: product_line_cost_usd
+        business_name: Product Line Cost USD
+        description: >-
+          Total product line cost in USD. Aggregates order_items.line_cost_usd at the line-item level.
+          Use for product-level cost analysis. This is the correct metric when analyzing cost by product.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(order_items.line_cost_usd) AS product_line_cost_usd
+                FROM order_items
+              columns_used:
+                - order_items.line_cost_usd
+
+      - name: product_line_profit_usd
+        business_name: Product Line Profit USD
+        description: >-
+          Total product line profit in USD calculated as line revenue minus line cost at the line-item level.
+          Formula: SUM(order_items.line_revenue_usd) - SUM(order_items.line_cost_usd).
+          Use for product-level profitability analysis.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(order_items.line_revenue_usd) - SUM(order_items.line_cost_usd) AS product_line_profit_usd
+                FROM order_items
+              columns_used:
+                - order_items.line_revenue_usd
+                - order_items.line_cost_usd
+
+      - name: units_sold
+        business_name: Units Sold
+        description: >-
+          Total number of product units sold. Aggregates order_items.quantity at the line-item level.
+          Use for product volume analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(order_items.quantity) AS units_sold
+                FROM order_items
+              columns_used:
+                - order_items.quantity
+
+      - name: average_selling_price_usd
+        business_name: Average Selling Price USD
+        description: >-
+          Average selling price per unit in USD calculated as total line revenue divided by total units sold.
+          Formula: SUM(order_items.line_revenue_usd) / NULLIF(SUM(order_items.quantity), 0).
+          Use for product pricing analysis.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(order_items.line_revenue_usd) / NULLIF(SUM(order_items.quantity), 0) AS average_selling_price_usd
+                FROM order_items
+              columns_used:
+                - order_items.line_revenue_usd
+                - order_items.quantity
+
+      - name: average_discount_pct
+        business_name: Average Discount Percentage
+        description: >-
+          Average discount percentage across order items weighted by line revenue.
+          Formula: SUM(order_items.discount_pct * order_items.line_revenue_usd) / NULLIF(SUM(order_items.line_revenue_usd), 0).
+          Use for discount analysis.
+        return_type: percentage
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(order_items.discount_pct * order_items.line_revenue_usd) / NULLIF(SUM(order_items.line_revenue_usd), 0) AS average_discount_pct
+                FROM order_items
+              columns_used:
+                - order_items.discount_pct
+                - order_items.line_revenue_usd
+
+      - name: total_freight_cost_usd
+        business_name: Total Freight Cost USD
+        description: >-
+          Total freight cost in USD. Aggregates shipments.freight_cost_usd at the shipment level.
+          Use for shipment-level freight cost analysis. Do not use after joining shipments to shipment_items.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(shipments.freight_cost_usd) AS total_freight_cost_usd
+                FROM shipments
+              columns_used:
+                - shipments.freight_cost_usd
+
+      - name: shipment_count
+        business_name: Shipment Count
+        description: >-
+          Total number of shipments. Counts distinct shipment_id.
+          Use for shipment volume analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(shipments.shipment_id) AS shipment_count
+                FROM shipments
+              columns_used:
+                - shipments.shipment_id
+
+      - name: units_shipped
+        business_name: Units Shipped
+        description: >-
+          Total number of product units shipped. Aggregates shipment_items.quantity at the shipment-item level.
+          Use for shipment volume analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(shipment_items.quantity) AS units_shipped
+                FROM shipment_items
+              columns_used:
+                - shipment_items.quantity
+
+      - name: average_delivery_delay_days
+        business_name: Average Delivery Delay Days
+        description: >-
+          Average delivery delay in days calculated as actual arrival minus expected arrival.
+          Formula: AVG(shipments.actual_arrival - shipments.expected_arrival).
+          Positive values indicate late delivery. Only includes shipments with recorded actual arrival.
+        return_type: decimal
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    AVG(shipments.actual_arrival - shipments.expected_arrival) AS average_delivery_delay_days
+                FROM shipments
+                WHERE shipments.actual_arrival IS NOT NULL
+              columns_used:
+                - shipments.actual_arrival
+                - shipments.expected_arrival
+
+      - name: on_time_delivery_pct
+        business_name: On-Time Delivery Percentage
+        description: >-
+          Percentage of shipments delivered on time or early.
+          Formula: COUNT(CASE WHEN actual_arrival <= expected_arrival THEN 1 END) / NULLIF(COUNT(CASE WHEN actual_arrival IS NOT NULL THEN 1 END), 0) * 100.
+          Only includes shipments with recorded actual arrival.
+        return_type: percentage
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(CASE WHEN shipments.actual_arrival <= shipments.expected_arrival THEN 1 END)::DECIMAL 
+                    / NULLIF(COUNT(CASE WHEN shipments.actual_arrival IS NOT NULL THEN 1 END), 0) * 100 AS on_time_delivery_pct
+                FROM shipments
+              columns_used:
+                - shipments.actual_arrival
+                - shipments.expected_arrival
+
+      - name: returned_order_count
+        business_name: Returned Order Count
+        description: >-
+          Total number of returned orders. Counts orders where is_returned is true.
+          Use for return analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(orders.order_id) AS returned_order_count
+                FROM orders
+                WHERE orders.is_returned = true
+              columns_used:
+                - orders.order_id
+                - orders.is_returned
+
+      - name: return_rate_pct
+        business_name: Return Rate Percentage
+        description: >-
+          Percentage of orders that were returned.
+          Formula: COUNT(CASE WHEN is_returned = true THEN 1 END) / NULLIF(COUNT(order_id), 0) * 100.
+          Use for return analysis.
+        return_type: percentage
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(CASE WHEN orders.is_returned = true THEN 1 END)::DECIMAL 
+                    / NULLIF(COUNT(orders.order_id), 0) * 100 AS return_rate_pct
+                FROM orders
+              columns_used:
+                - orders.is_returned
+                - orders.order_id
+
+      - name: average_customer_rating
+        business_name: Average Customer Rating
+        description: >-
+          Average customer rating across orders.
+          Formula: AVG(orders.customer_rating).
+          Only includes orders with recorded ratings.
+        return_type: decimal
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    AVG(orders.customer_rating) AS average_customer_rating
+                FROM orders
+                WHERE orders.customer_rating IS NOT NULL
+              columns_used:
+                - orders.customer_rating
+
+      - name: revenue_per_customer_usd
+        business_name: Revenue Per Customer USD
+        description: >-
+          Average revenue per customer in USD calculated as total revenue divided by distinct customer count.
+          Formula: SUM(orders.total_amount_usd) / NULLIF(COUNT(DISTINCT orders.customer_id), 0).
+          Use for customer value analysis.
+        return_type: currency_usd
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    SUM(orders.total_amount_usd) / NULLIF(COUNT(DISTINCT orders.customer_id), 0) AS revenue_per_customer_usd
+                FROM orders
+              columns_used:
+                - orders.total_amount_usd
+                - orders.customer_id
+
+      - name: orders_per_customer
+        business_name: Orders Per Customer
+        description: >-
+          Average number of orders per customer calculated as total orders divided by distinct customer count.
+          Formula: COUNT(orders.order_id) / NULLIF(COUNT(DISTINCT orders.customer_id), 0).
+          Use for customer engagement analysis.
+        return_type: decimal
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(orders.order_id)::DECIMAL / NULLIF(COUNT(DISTINCT orders.customer_id), 0) AS orders_per_customer
+                FROM orders
+              columns_used:
+                - orders.order_id
+                - orders.customer_id
+
+      - name: product_count
+        business_name: Product Count
+        description: >-
+          Total number of distinct products. Counts distinct product_id.
+          Use for product catalog analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(DISTINCT products.product_id) AS product_count
+                FROM products
+              columns_used:
+                - products.product_id
+
+      - name: supplier_count
+        business_name: Supplier Count
+        description: >-
+          Total number of distinct suppliers. Counts distinct supplier_id.
+          Use for supplier base analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(DISTINCT suppliers.supplier_id) AS supplier_count
+                FROM suppliers
+              columns_used:
+                - suppliers.supplier_id
+
+      - name: average_supplier_reliability_score
+        business_name: Average Supplier Reliability Score
+        description: >-
+          Average reliability score across suppliers.
+          Formula: AVG(suppliers.reliability_score).
+          Use for supplier performance analysis.
+        return_type: decimal
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    AVG(suppliers.reliability_score) AS average_supplier_reliability_score
+                FROM suppliers
+              columns_used:
+                - suppliers.reliability_score
+
+      - name: campaign_count
+        business_name: Campaign Count
+        description: >-
+          Total number of marketing campaigns. Counts distinct campaign_id.
+          Use for campaign volume analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(campaigns.campaign_id) AS campaign_count
+                FROM campaigns
+              columns_used:
+                - campaigns.campaign_id
+
+      - name: employee_count
+        business_name: Employee Count
+        description: >-
+          Total number of employees. Counts distinct employee_id.
+          Use for workforce analysis.
+        return_type: integer
+        result_grain: single value
+        expression:
+          dialects:
+            - dialect: POSTGRESQL
+              expression: |
+                SELECT
+                    COUNT(employees.employee_id) AS employee_count
+                FROM employees
+              columns_used:
+                - employees.employee_id
