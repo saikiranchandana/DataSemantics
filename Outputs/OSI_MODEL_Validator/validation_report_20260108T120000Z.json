@@ -1,0 +1,127 @@
+{
+  "overall_validation_score": 92.5,
+  "accuracy_score": 95.0,
+  "efficiency_score": 85.0,
+  "completeness_score": 97.5,
+  "overall_status": "PASS WITH WARNINGS",
+  "completeness_assessment": [
+    {
+      "severity": "Low",
+      "area": "Dataset Coverage",
+      "issue": "All 13 tables from the glossary have corresponding datasets in the semantic model",
+      "recommendation": "No action required - full coverage achieved"
+    },
+    {
+      "severity": "Low",
+      "area": "Attribute Coverage",
+      "issue": "All 87 documented columns in the glossary have corresponding field definitions in the semantic model",
+      "recommendation": "No action required - full attribute coverage achieved"
+    },
+    {
+      "severity": "Low",
+      "area": "Relationship Coverage",
+      "issue": "All foreign key relationships documented in the glossary are represented in the semantic model relationships section",
+      "recommendation": "No action required - comprehensive relationship mapping achieved"
+    },
+    {
+      "severity": "Medium",
+      "area": "Documentation Coverage",
+      "issue": "Campaign dataset missing explicit reference to how campaigns link to orders or customers for campaign effectiveness analysis",
+      "recommendation": "Add relationship or ai_context guidance explaining how to analyze campaign impact on orders (e.g., through date range overlap or explicit campaign_id tracking)"
+    },
+    {
+      "severity": "Low",
+      "area": "Constraint Coverage",
+      "issue": "All primary keys, foreign keys, NOT NULL, UNIQUE, and computed field constraints from the glossary are documented in the semantic model",
+      "recommendation": "No action required - constraint documentation is complete"
+    }
+  ],
+  "accuracy_assessment": [
+    {
+      "severity": "Low",
+      "area": "Type Consistency",
+      "issue": "All data types in the semantic model match the glossary exactly (VARCHAR lengths, NUMERIC precision/scale, serial, INT4, TIMESTAMP, DATE, BOOL)",
+      "recommendation": "No action required - type definitions are accurate"
+    },
+    {
+      "severity": "Low",
+      "area": "Business Definition Accuracy",
+      "issue": "Business names and descriptions in the semantic model align with business terms and descriptions in the glossary across all 87 columns",
+      "recommendation": "No action required - business definitions are consistent"
+    },
+    {
+      "severity": "Low",
+      "area": "Relationship Cardinality",
+      "issue": "All relationship cardinalities (many_to_one, one_to_many) match the PK/FK constraints documented in the glossary",
+      "recommendation": "No action required - relationship logic is accurate"
+    },
+    {
+      "severity": "Medium",
+      "area": "Metric Accuracy",
+      "issue": "Metric 'revenue_growth_mom_pct' uses LAG window function but does not handle the first month (which will have NULL prev_month_revenue) explicitly in the result interpretation guidance",
+      "recommendation": "Add documentation note that the first month in the time series will have NULL growth percentage"
+    },
+    {
+      "severity": "Low",
+      "area": "Join Logic Accuracy",
+      "issue": "SCD Type-2 join logic for customer_account_managers correctly implements valid_from/valid_to date range checking with COALESCE for open-ended periods",
+      "recommendation": "No action required - temporal join logic is accurate"
+    },
+    {
+      "severity": "Low",
+      "area": "As-Of Join Accuracy",
+      "issue": "Exchange rate as-of join correctly retrieves the most recent rate on or before the order date using ORDER BY and LIMIT 1",
+      "recommendation": "No action required - as-of join logic is accurate"
+    },
+    {
+      "severity": "Low",
+      "area": "Recursive Hierarchy Accuracy",
+      "issue": "Both employee management hierarchy and product category hierarchy recursive CTEs are correctly structured with base case (NULL parent/manager) and recursive case",
+      "recommendation": "No action required - hierarchy traversal logic is accurate"
+    }
+  ],
+  "efficiency_assessment": [
+    {
+      "severity": "Medium",
+      "area": "Redundant Documentation",
+      "issue": "The phrase 'Auto-incrementing primary key' appears 13 times across all primary key field descriptions - this is repetitive and could be consolidated",
+      "recommendation": "Consider adding a model-level convention note that all 'serial' type fields are auto-incrementing primary keys, then simplify individual field descriptions"
+    },
+    {
+      "severity": "Low",
+      "area": "Duplicate Metric Logic",
+      "issue": "Metrics 'total_revenue' and 'monthly_revenue' both sum orders.total_amount_usd - the monthly version adds time grouping but the core aggregation logic is identical",
+      "recommendation": "Consider defining 'total_revenue' as a reusable base measure and referencing it in 'monthly_revenue' to reduce duplication"
+    },
+    {
+      "severity": "Low",
+      "area": "Duplicate Metric Logic",
+      "issue": "Metrics 'total_cost' and 'gross_profit' both sum orders.total_cost_usd - opportunity to define a shared base measure",
+      "recommendation": "Define 'total_cost' as a reusable base measure and reference it in 'gross_profit' calculation"
+    },
+    {
+      "severity": "Medium",
+      "area": "Repeated Warning Text",
+      "issue": "The double-counting warning 'Do not sum after joining to ORDER_ITEMS/SHIPMENT_ITEMS' appears in multiple places (ai_context instructions, relationship resolutions, field descriptions, metric descriptions)",
+      "recommendation": "Consolidate the double-counting prevention guidance into a single authoritative section in ai_context and reference it from other locations to avoid maintenance burden"
+    },
+    {
+      "severity": "Low",
+      "area": "Structural Efficiency",
+      "issue": "Several metrics (gross_margin_pct, on_time_delivery_pct, return_rate_pct) implement safe division with NULLIF - this pattern could be abstracted into a reusable function or macro",
+      "recommendation": "Consider documenting a standard safe division pattern once in ai_context and referencing it, or use a SQL UDF if the target platform supports it"
+    },
+    {
+      "severity": "Low",
+      "area": "Reusability Opportunity",
+      "issue": "Metrics 'customer_revenue_rank' and 'product_revenue_rank' use identical DENSE_RANK logic with different grouping dimensions - opportunity to generalize",
+      "recommendation": "Consider creating a parameterized ranking metric template or document a standard ranking pattern in ai_context that can be adapted for different dimensions"
+    },
+    {
+      "severity": "Medium",
+      "area": "Documentation Redundancy",
+      "issue": "Geographic dimension fields (city, country) have nearly identical descriptions across customers, stores, and suppliers tables ('City/Country where the X is located. Useful for geographic analysis')",
+      "recommendation": "Create a shared glossary entry for common dimension types (geographic, temporal, status) and reference them to reduce repetitive text"
+    }
+  ]
+}
