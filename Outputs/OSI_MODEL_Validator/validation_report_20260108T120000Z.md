@@ -2,10 +2,10 @@
 
 | Metric | Score (%) |
 |---------|-----------|
-| Overall Validation Score | 92.5 |
-| Accuracy Score | 95.0 |
-| Efficiency Score | 85.0 |
-| Completeness Score | 97.5 |
+| Overall Validation Score | 92.31 |
+| Accuracy Score | 95.00 |
+| Efficiency Score | 85.00 |
+| Completeness Score | 97.00 |
 | Overall Status | PASS WITH WARNINGS |
 
 ---
@@ -14,11 +14,12 @@
 
 | Severity | Area | Issue | Recommendation |
 |----------|------|-------|-----------------|
-| Low | Dataset Coverage | All 13 tables from the glossary have corresponding datasets in the semantic model | No action required - full coverage achieved |
-| Low | Attribute Coverage | All 87 documented columns in the glossary have corresponding field definitions in the semantic model | No action required - full attribute coverage achieved |
-| Low | Relationship Coverage | All foreign key relationships documented in the glossary are represented in the semantic model relationships section | No action required - comprehensive relationship mapping achieved |
-| Medium | Documentation Coverage | Campaign dataset missing explicit reference to how campaigns link to orders or customers for campaign effectiveness analysis | Add relationship or ai_context guidance explaining how to analyze campaign impact on orders (e.g., through date range overlap or explicit campaign_id tracking) |
-| Low | Constraint Coverage | All primary keys, foreign keys, NOT NULL, UNIQUE, and computed field constraints from the glossary are documented in the semantic model | No action required - constraint documentation is complete |
+| Low | Dataset Coverage | All 13 tables from the glossary have corresponding datasets in the semantic model. | No action required. Coverage is complete. |
+| Low | Attribute Coverage | All 87 columns documented in the glossary are represented in the semantic model datasets. | No action required. Coverage is complete. |
+| Medium | Relationship Coverage | The semantic model documents 16 relationships. All foreign key columns referenced in relationships exist in the glossary with appropriate FK/PK constraints. | Verify that all implicit relationships (e.g., campaigns to orders via discount tracking) are documented if needed for analytics. |
+| Low | Metric Column References | All 50 metrics reference only columns that exist in the glossary. No orphaned column references detected. | No action required. All metric definitions are valid. |
+| Low | Documentation Coverage | All datasets (13/13) have business_name and description. All fields (87/87) have business_name and description. All metrics (50/50) have business_name and description. | No action required. Documentation is complete. |
+| Low | Constraint Coverage | Primary keys, foreign keys, NOT NULL, UNIQUE, and computed field constraints are documented consistently across both artifacts. | No action required. Constraint documentation is complete. |
 
 ---
 
@@ -26,13 +27,14 @@
 
 | Severity | Area | Issue | Recommendation |
 |----------|------|-------|-----------------|
-| Low | Type Consistency | All data types in the semantic model match the glossary exactly (VARCHAR lengths, NUMERIC precision/scale, serial, INT4, TIMESTAMP, DATE, BOOL) | No action required - type definitions are accurate |
-| Low | Business Definition Accuracy | Business names and descriptions in the semantic model align with business terms and descriptions in the glossary across all 87 columns | No action required - business definitions are consistent |
-| Low | Relationship Cardinality | All relationship cardinalities (many_to_one, one_to_many) match the PK/FK constraints documented in the glossary | No action required - relationship logic is accurate |
-| Medium | Metric Accuracy | Metric 'revenue_growth_mom_pct' uses LAG window function but does not handle the first month (which will have NULL prev_month_revenue) explicitly in the result interpretation guidance | Add documentation note that the first month in the time series will have NULL growth percentage |
-| Low | Join Logic Accuracy | SCD Type-2 join logic for customer_account_managers correctly implements valid_from/valid_to date range checking with COALESCE for open-ended periods | No action required - temporal join logic is accurate |
-| Low | As-Of Join Accuracy | Exchange rate as-of join correctly retrieves the most recent rate on or before the order date using ORDER BY and LIMIT 1 | No action required - as-of join logic is accurate |
-| Low | Recursive Hierarchy Accuracy | Both employee management hierarchy and product category hierarchy recursive CTEs are correctly structured with base case (NULL parent/manager) and recursive case | No action required - hierarchy traversal logic is accurate |
+| Low | Type Consistency | Data types in the semantic model match the glossary for all 87 columns. Serial types align with INT4/auto-increment, VARCHAR lengths match, NUMERIC precision matches. | No action required. Type definitions are accurate. |
+| Low | Constraint Accuracy | Primary key, foreign key, NOT NULL, UNIQUE, and DEFAULT constraints in the semantic model match the glossary documentation. | No action required. Constraints are accurately represented. |
+| Medium | Business Definition Alignment | The semantic model's ai_context instructions for double-counting prevention (orders.total_amount_usd vs order_items.line_revenue_usd) align with the glossary's computed field documentation for line_revenue_usd and line_cost_usd. | Ensure downstream users understand the critical guidance on grain-appropriate aggregation to prevent double-counting. |
+| Low | Relationship Cardinality | Join cardinalities (many-to-one, one-to-one) stated in the semantic model align with PK/FK constraints in the glossary. | No action required. Cardinalities are accurate. |
+| Low | Naming Convention Consistency | All table and column names use consistent snake_case convention. ID suffix pattern is consistent (customer_id, order_id, product_id, etc.). | No action required. Naming conventions are consistent. |
+| Medium | Sample Value Consistency | Glossary shows sample values with appropriate formats (dates as DATE, numerics as numbers, PII redacted). Types appear consistent with samples. | Verify that actual data in the source system matches the documented types and formats. |
+| Low | Hierarchical Relationship Accuracy | The product_categories.parent_category_id and employees.manager_id self-referencing relationships are correctly documented in both artifacts with appropriate FK constraints and NULL handling for root nodes. | No action required. Hierarchical relationships are accurately modeled. |
+| Low | Temporal Relationship Accuracy | The SCD Type-2 relationship (customer_account_managers with valid_from/valid_to) and as-of relationship (exchange_rates with rate_date) are correctly documented with appropriate temporal join logic. | No action required. Temporal relationships are accurately modeled. |
 
 ---
 
@@ -40,11 +42,12 @@
 
 | Severity | Area | Issue | Recommendation |
 |----------|------|-------|-----------------|
-| Medium | Redundant Documentation | The phrase 'Auto-incrementing primary key' appears 13 times across all primary key field descriptions - this is repetitive and could be consolidated | Consider adding a model-level convention note that all 'serial' type fields are auto-incrementing primary keys, then simplify individual field descriptions |
-| Low | Duplicate Metric Logic | Metrics 'total_revenue' and 'monthly_revenue' both sum orders.total_amount_usd - the monthly version adds time grouping but the core aggregation logic is identical | Consider defining 'total_revenue' as a reusable base measure and referencing it in 'monthly_revenue' to reduce duplication |
-| Low | Duplicate Metric Logic | Metrics 'total_cost' and 'gross_profit' both sum orders.total_cost_usd - opportunity to define a shared base measure | Define 'total_cost' as a reusable base measure and reference it in 'gross_profit' calculation |
-| Medium | Repeated Warning Text | The double-counting warning 'Do not sum after joining to ORDER_ITEMS/SHIPMENT_ITEMS' appears in multiple places (ai_context instructions, relationship resolutions, field descriptions, metric descriptions) | Consolidate the double-counting prevention guidance into a single authoritative section in ai_context and reference it from other locations to avoid maintenance burden |
-| Low | Structural Efficiency | Several metrics (gross_margin_pct, on_time_delivery_pct, return_rate_pct) implement safe division with NULLIF - this pattern could be abstracted into a reusable function or macro | Consider documenting a standard safe division pattern once in ai_context and referencing it, or use a SQL UDF if the target platform supports it |
-| Low | Reusability Opportunity | Metrics 'customer_revenue_rank' and 'product_revenue_rank' use identical DENSE_RANK logic with different grouping dimensions - opportunity to generalize | Consider creating a parameterized ranking metric template or document a standard ranking pattern in ai_context that can be adapted for different dimensions |
-| Medium | Documentation Redundancy | Geographic dimension fields (city, country) have nearly identical descriptions across customers, stores, and suppliers tables ('City/Country where the X is located. Useful for geographic analysis') | Create a shared glossary entry for common dimension types (geographic, temporal, status) and reference them to reduce repetitive text |
+| Low | Computed Field Reusability | The glossary documents line_revenue_usd and line_cost_usd as computed fields. The semantic model correctly references these pre-computed fields in metrics rather than recalculating, improving query efficiency. | No action required. Computed fields are being reused appropriately. |
+| Medium | Metric Definition Redundancy | Several metrics calculate similar aggregations with minor variations (e.g., total_revenue_usd, product_line_revenue_usd, monthly_revenue_usd, revenue_by_customer_segment_usd all sum revenue at different grains). While grain-appropriate, consider whether a parameterized metric framework could reduce duplication. | Consider implementing a metric layer or parameterized metric definitions to reduce maintenance overhead for similar metrics. |
+| Low | Documentation Redundancy | Business term and description fields are distinct and non-redundant across the glossary. The semantic model's ai_context provides comprehensive guidance without unnecessary repetition. | No action required. Documentation is efficient. |
+| Medium | Relationship Documentation Efficiency | The semantic model documents 16 relationships with detailed resolution guidance. Some standard many-to-one FK relationships have verbose resolution text that largely repeats the same pattern. | Consider templating standard FK relationship documentation to reduce verbosity while maintaining clarity for complex relationships (SCD Type-2, as-of, hierarchical). |
+| Low | Metric Complexity | Metrics use appropriate safe division (NULLIF) and CASE statements for edge cases. No unnecessarily complex expressions detected. | No action required. Metric definitions are appropriately complex. |
+| Medium | Aggregation Grain Clarity | The semantic model provides explicit grain guidance in ai_context and metric descriptions. However, 15 metrics return "single value" grain, which could be more specific about implicit grouping assumptions. | Enhance grain documentation for single-value metrics to clarify whether they assume no filters, all-time aggregation, or other implicit scoping. |
+| Low | Hierarchical Query Efficiency | The semantic model correctly recommends recursive CTEs for product_categories and employees hierarchies, which is the standard efficient approach for hierarchical queries. | No action required. Hierarchical query guidance is efficient. |
 
+---
